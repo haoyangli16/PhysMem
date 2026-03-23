@@ -22,6 +22,14 @@
   <img src="assets/pipeline.jpg" alt="PhysMem Pipeline" width="100%">
 </p>
 
+## TL;DR
+
+- **Typed learning objectives** — Principles are categorized (AVOID, PREFER, SEQUENCE, COMPARE) to guide both generation and verification.
+- **Resonance gating** — Expected experiences reinforce existing principles silently; only surprising outcomes (prediction errors) trigger new learning.
+- **Ebbinghaus-inspired decay** — Unused principles fade over time; frequently validated ones persist.
+- **Memory folding** — Raw experiences are compressed once covered by established principles, keeping memory bounded.
+- **Three-stage scientific loop** — Experience clustering → hypothesis generation → verification & promotion to principles.
+
 ## Three-Layer Memory Architecture
 
 PhysMem implements a scientific learning loop inspired by the scientific method:
