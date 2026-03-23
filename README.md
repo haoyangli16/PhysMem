@@ -24,16 +24,6 @@
   <img src="assets/pipeline.jpg" alt="PhysMem Pipeline" width="100%">
 </p>
 
-## Abstract
-
-Reliable object manipulation requires understanding physical properties that vary across objects and environments. Vision-language model (VLM) planners can reason about friction and stability in general terms; however, they often cannot predict how a specific ball will roll on a particular surface or which stone will provide a stable foundation without direct experience. We present **PhysMem**, a memory framework that enables VLM robot planners to learn physical principles from interaction at test time, *without updating model parameters*. The system records experiences, generates candidate hypotheses, and verifies them through targeted interaction before promoting validated knowledge to guide future decisions. A central design choice is *verification before application*: the system tests hypotheses against new observations rather than applying retrieved experience directly.
-
-### Key Results
-
-| | Success Rate | vs. Baseline | Parameter Updates |
-|---|:---:|:---:|:---:|
-| **PhysMem** | **76%** | **3.3x** | **0** |
-
 ## Three-Layer Memory Architecture
 
 PhysMem implements a scientific learning loop inspired by the scientific method:
