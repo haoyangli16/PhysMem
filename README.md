@@ -1,12 +1,44 @@
-# PhysMem: Physical Memory System for Experience-to-Principle Learning
+# PhysMem: Self-Evolving Physical Memory for Robot Manipulation
 
-PhysMem is a test-time training memory system that learns transferable principles from raw experience. It implements a scientific learning loop:
+<p align="center">
+  <a href="https://arxiv.org/abs/2602.20323"><img src="https://img.shields.io/badge/arXiv-2602.20323-b31b1b.svg" alt="arXiv"></a>
+  <a href="https://phys-mem.github.io/"><img src="https://img.shields.io/badge/Project-Page-blue.svg" alt="Project Page"></a>
+  <a href="https://arxiv.org/pdf/2602.20323"><img src="https://img.shields.io/badge/Paper-PDF-green.svg" alt="Paper"></a>
+  <a href="#license"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License"></a>
+</p>
+
+<p align="center">
+  <a href="https://haoyangli16.github.io/">Haoyang Li</a> &middot;
+  <a href="https://qq456cvb.github.io/">Yang You</a> &middot;
+  <a href="https://cseweb.ucsd.edu/~haosu/index.html">Hao Su</a> &middot;
+  <a href="https://profiles.stanford.edu/leonidas-guibas">Leonidas Guibas</a>
+</p>
+
+<p align="center">
+  Stanford University &middot; UC San Diego
+</p>
+
+<p align="center">
+  <img src="assets/pipeline.jpg" alt="PhysMem Pipeline" width="100%">
+</p>
+
+## Abstract
+
+Reliable object manipulation requires understanding physical properties that vary across objects and environments. Vision-language model (VLM) planners can reason about friction and stability in general terms; however, they often cannot predict how a specific ball will roll on a particular surface or which stone will provide a stable foundation without direct experience. We present **PhysMem**, a memory framework that enables VLM robot planners to learn physical principles from interaction at test time, *without updating model parameters*. The system records experiences, generates candidate hypotheses, and verifies them through targeted interaction before promoting validated knowledge to guide future decisions. A central design choice is *verification before application*: the system tests hypotheses against new observations rather than applying retrieved experience directly.
+
+### Key Results
+
+| | Success Rate | vs. Baseline | Parameter Updates |
+|---|:---:|:---:|:---:|
+| **PhysMem** | **76%** | **3.3x** | **0** |
+
+## Three-Layer Memory Architecture
+
+PhysMem implements a scientific learning loop inspired by the scientific method:
 
 ```
 Raw Experience -> [Consolidation] -> Hypotheses -> [Verification] -> Principles
 ```
-
-## Three-Layer Memory Architecture
 
 | Layer | Storage | Lifecycle |
 |-------|---------|-----------|
@@ -57,11 +89,9 @@ mem = PhysMem(llm=llm)
 # 2. Record experiences during your task loop
 for episode in range(100):
     for step in range(max_steps):
-        # Your agent takes an action
         action = agent.act(observation)
         result = env.step(action)
 
-        # Record the experience
         mem.record_experience(
             action=action,
             success=result.success,
@@ -75,7 +105,6 @@ for episode in range(100):
             state_vec=observation.embedding,  # optional
         )
 
-    # End episode
     mem.end_episode(success=env.is_success)
 
 # 3. Get learned knowledge
@@ -85,12 +114,11 @@ for p in principles:
 
 # 4. Inject principles into LLM prompts
 prompt_text = mem.get_principles_prompt(action_type="grasp")
-# -> "1. [HIGH] Prefer grasping from the side when object is flat..."
 ```
 
 ## Without LLM (Rule-Based)
 
-PhysMem works without an LLM too - it uses rule-based hypothesis generation:
+PhysMem works without an LLM too — it uses rule-based hypothesis generation:
 
 ```python
 from physmem import PhysMem
@@ -181,3 +209,21 @@ Once principles are established, the raw experiences that support them can be "f
 
 ### Hypothesis Verification
 Hypotheses aren't blindly promoted. The system uses a verification planner that designs experiments, tracks results, and only promotes hypotheses that pass confidence thresholds.
+
+## Citation
+
+If you find this work useful, please cite:
+
+```bibtex
+@article{li2025physmem,
+  title   = {Learning Physical Principles from Interaction:
+             Self-Evolving Planning via Test-Time Memory},
+  author  = {Li, Haoyang and You, Yang and Su, Hao and Guibas, Leonidas},
+  journal = {arXiv preprint arXiv:2602.20323},
+  year    = {2025}
+}
+```
+
+## License
+
+This project is licensed under the MIT License.
