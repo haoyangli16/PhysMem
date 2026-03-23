@@ -1,0 +1,97 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "physmem"
+version = "0.1.0"
+description = "Physical Memory System for Experience-to-Principle Learning"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "MIT"}
+authors = [
+    {name = "PhysMem Team"}
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+# Core dependencies only - minimal by design
+dependencies = [
+    "numpy>=1.20",
+]
+
+[project.optional-dependencies]
+# Similarity search (recommended)
+faiss = [
+    "faiss-cpu>=1.7",
+]
+faiss-gpu = [
+    "faiss-gpu>=1.7",
+]
+
+# LLM providers - install what you need
+openai = [
+    "openai>=1.0.0",
+]
+gemini = [
+    "google-genai>=0.1.0",
+]
+qwen = [
+    "openai>=1.0.0",  # Qwen uses OpenAI-compatible API
+]
+
+# All LLM providers
+llm = [
+    "openai>=1.0.0",
+    "google-genai>=0.1.0",
+]
+
+# Clustering and semantic embedding
+clustering = [
+    "scikit-learn>=1.0",
+    "sentence-transformers>=2.0",
+]
+
+# Full installation (everything except GPU-specific)
+all = [
+    "faiss-cpu>=1.7",
+    "openai>=1.0.0",
+    "google-genai>=0.1.0",
+    "scikit-learn>=1.0",
+    "sentence-transformers>=2.0",
+]
+
+# Development
+dev = [
+    "pytest",
+    "black",
+    "ruff",
+]
+
+[project.urls]
+Homepage = "https://github.com/physmem/physmem"
+Documentation = "https://github.com/physmem/physmem"
+
+[tool.setuptools.packages]
+find = {where = ["."], include = ["physmem*"]}
+
+[tool.setuptools.package-data]
+physmem = ["README.md"]
+
+[tool.black]
+line-length = 100
+target-version = ['py38', 'py39', 'py310', 'py311', 'py312']
+
+[tool.ruff]
+line-length = 100
+target-version = "py38"
