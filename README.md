@@ -214,8 +214,7 @@ If you find this work useful, please cite:
 
 ```bibtex
 @article{li2025physmem,
-  title   = {Learning Physical Principles from Interaction:
-             Self-Evolving Planning via Test-Time Memory},
+  title   = {PhysMem: Self-Evolving Physical Memory for Robot Manipulation},
   author  = {Li, Haoyang and You, Yang and Su, Hao and Guibas, Leonidas},
   journal = {arXiv preprint arXiv:2602.20323},
   year    = {2025}
