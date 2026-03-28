@@ -1,4 +1,4 @@
-<h2 align="center">PhysMem: Self-Evolving Physical Memory for Robot Manipulation</h2>
+<h2 align="center">PhysMem: Scaling Test-time Physical Memory for Robot Manipulation</h2>
 
 <p align="center">
   <a href="https://arxiv.org/abs/2602.20323"><img src="https://img.shields.io/badge/arXiv-2602.20323-b31b1b.svg" alt="arXiv"></a>
