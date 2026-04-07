@@ -1,28 +1,12 @@
-<h2 align="center">PhysMem: Scaling Test-time Physical Memory for Robot Manipulation</h2>
+# PhysMem: Physical Memory System for Experience-to-Principle Learning
 
-<p align="center">
-  <a href="https://arxiv.org/abs/2602.20323"><img src="https://img.shields.io/badge/arXiv-2602.20323-b31b1b.svg" alt="arXiv"></a>
-  <a href="https://phys-mem.github.io/"><img src="https://img.shields.io/badge/Project-Page-blue.svg" alt="Project Page"></a>
-  <a href="https://arxiv.org/pdf/2602.20323"><img src="https://img.shields.io/badge/Paper-PDF-green.svg" alt="Paper"></a>
-  <a href="#license"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License"></a>
-</p>
+PhysMem is a test-time training memory system that learns transferable principles from raw experience. It implements a scientific learning loop:
 
-<p align="center">
-  <a href="https://haoyangli16.github.io/">Haoyang Li</a> &middot;
-  <a href="https://qq456cvb.github.io/">Yang You</a> &middot;
-  <a href="https://cseweb.ucsd.edu/~haosu/index.html">Hao Su</a> &middot;
-  <a href="https://profiles.stanford.edu/leonidas-guibas">Leonidas Guibas</a>
-</p>
+```
+Raw Experience -> [Consolidation] -> Hypotheses -> [Verification] -> Principles
+```
 
-<p align="center">
-  Stanford University &middot; UC San Diego
-</p>
-
-<p align="center">
-  <img src="assets/pipeline.jpg" alt="PhysMem Pipeline" width="100%">
-</p>
-
-## TL;DR
+### TL;DR
 
 - **Typed learning objectives** — Principles are categorized (AVOID, PREFER, SEQUENCE, COMPARE) to guide both generation and verification.
 - **Resonance gating** — Expected experiences reinforce existing principles silently; only surprising outcomes (prediction errors) trigger new learning.
@@ -31,12 +15,6 @@
 - **Three-stage scientific loop** — Experience clustering → hypothesis generation → verification & promotion to principles.
 
 ## Three-Layer Memory Architecture
-
-PhysMem implements a scientific learning loop inspired by the scientific method:
-
-```
-Raw Experience -> [Consolidation] -> Hypotheses -> [Verification] -> Principles
-```
 
 | Layer | Storage | Lifecycle |
 |-------|---------|-----------|
@@ -76,20 +54,41 @@ pip install -e ".[all,dev]"
 
 ## Quick Start
 
+PhysMem only pays off if learned knowledge actually flows **back into
+the agent**. The core pattern is a closed loop:
+
+```
+retrieve principles -> inject into prompt -> act -> observe -> record -> consolidate
+```
+
+Every step: ask PhysMem what it has learned, inject that into the
+planner's prompt, act, and then record the outcome. Skipping the
+injection step turns PhysMem into an offline recorder and defeats the
+purpose of the three-tier memory.
+
 ```python
 from physmem import PhysMem
 from physmem.llm import create_llm
 
-# 1. Create the memory system with an LLM backend
+# 1. Create the memory system with an LLM backend.
 llm = create_llm("openai", model="gpt-4o")
 mem = PhysMem(llm=llm)
 
-# 2. Record experiences during your task loop
 for episode in range(100):
     for step in range(max_steps):
-        action = agent.act(observation)
+        # 2. Retrieve learned knowledge and format it for the planner.
+        principles_prompt = mem.get_principles_prompt()
+
+        # 3. Inject the principles into the agent's prompt.  This is
+        #    the step that closes the feedback loop: memory actually
+        #    influences the next decision.
+        action = agent.act(
+            observation=observation,
+            principles=principles_prompt,   # <- key: memory infects the agent
+        )
         result = env.step(action)
 
+        # 4. Record the experience so consolidation can keep learning.
         mem.record_experience(
             action=action,
             success=result.success,
@@ -101,33 +100,76 @@ for episode in range(100):
                 "progress": env.progress,
             },
             state_vec=observation.embedding,  # optional
+            active_principles=mem.get_principles(),  # tracks which
+                                                     # principles were in
+                                                     # scope at decision time
         )
 
+    # 5. End-of-episode housekeeping: consolidation, verification,
+    #    promotion, and auto-save all happen here.
     mem.end_episode(success=env.is_success)
 
-# 3. Get learned knowledge
-principles = mem.get_principles()
-for p in principles:
+# 6. Inspect what was learned.
+for p in mem.get_principles():
     print(f"[{p.principle_type}] {p.content} (confidence: {p.confidence:.2f})")
 
-# 4. Inject principles into LLM prompts
+# 7. Reuse the prompt formatter standalone if you want to see what
+#    the agent sees.
 prompt_text = mem.get_principles_prompt(action_type="grasp")
+# -> "1. [HIGH] Prefer grasping from the side when object is flat..."
 ```
+
+### How memory affects decisions
+
+If your agent's `act()` method does not consume `principles_prompt`, no
+learning takes effect. The end-to-end reference integration (including
+how to inject principles into a VLM planner) lives in
+[`examples/reflect_vlm/run_with_physmem.py`](examples/reflect_vlm/run_with_physmem.py).
+For a fully self-contained demonstration that you can run in one
+command, see [`examples/quickstart.py`](examples/quickstart.py); it
+implements a tiny principle-aware policy and prints a visible
+learning curve.
 
 ## Without LLM (Rule-Based)
 
-PhysMem works without an LLM too — it uses rule-based hypothesis generation:
+PhysMem works without an LLM too — the rule-based path extracts the
+dominant action and the dominant symbolic-state features from each
+cluster and emits actionable `AVOID` / `PREFER` hypotheses. Your
+policy can then filter or bias on `principle.action_types` and
+`principle.trigger_conditions` directly:
 
 ```python
 from physmem import PhysMem
 
 mem = PhysMem()  # No LLM needed
 
-mem.record_experience(action="push", success=False, fail=True, fail_tag="collision")
-mem.record_experience(action="push", success=False, fail=True, fail_tag="collision")
-mem.record_experience(action="lift", success=True)
+# Run a few episodes so consolidation has something to work with.
+for obj in ["flat", "flat", "flat", "tall", "tall", "tall"]:
+    mem.record_experience(
+        action="push",
+        success=False,
+        fail=True,
+        fail_tag="wrong_action",
+        symbolic_state={"object_size": obj},
+    )
+mem.end_episode(success=False)
 
-mem.end_episode(success=True)
+# Read back the learned hypotheses and use them in your policy.
+for h in mem.get_hypotheses():
+    print(h.statement, h.action_types, h.trigger_conditions)
+# -> "Avoid 'push' when object_size=flat (3/3)" ['push'] ['object_size=flat']
+
+# Example: simple principle-aware policy (see examples/quickstart.py
+# for a self-contained version).
+def select_action(obj, knowledge, approaches):
+    forbidden = {
+        a for item in knowledge
+        if str(getattr(item, "hypothesis_type",
+                       getattr(item, "principle_type", ""))).lower() == "avoid"
+        and f"object_size={obj}" in (item.trigger_conditions or [""])
+        for a in (item.action_types or [])
+    }
+    return next(a for a in approaches if a not in forbidden)
 ```
 
 ## Custom LLM Backend
@@ -207,20 +249,3 @@ Once principles are established, the raw experiences that support them can be "f
 
 ### Hypothesis Verification
 Hypotheses aren't blindly promoted. The system uses a verification planner that designs experiments, tracks results, and only promotes hypotheses that pass confidence thresholds.
-
-## Citation
-
-If you find this work useful, please cite:
-
-```bibtex
-@article{li2025physmem,
-  title   = {PhysMem: Self-Evolving Physical Memory for Robot Manipulation},
-  author  = {Li, Haoyang and You, Yang and Su, Hao and Guibas, Leonidas},
-  journal = {arXiv preprint arXiv:2602.20323},
-  year    = {2025}
-}
-```
-
-## License
-
-This project is licensed under the MIT License.

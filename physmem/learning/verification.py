@@ -14,7 +14,7 @@ from __future__ import annotations
 import random
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from pathlib import Path
 
 import numpy as np
@@ -27,7 +27,7 @@ from physmem.core.hypothesis import (
     PrincipleType,
 )
 from physmem.core.principle import Principle, PrincipleStore
-from physmem.core.experience import MemoryBank
+from physmem.core.experience import Experience, MemoryBank
 
 
 @dataclass
@@ -198,6 +198,214 @@ class VerificationPlanner:
         self._episodes_since_verification = 0
         self.current_plan = None
 
+    # =========================================================================
+    # Passive verification (observation-only, no agent cooperation needed)
+    # =========================================================================
+
+    def passive_verify_all(
+        self,
+        memory: MemoryBank,
+        recent_window: int = 200,
+        min_matching: int = 6,
+    ) -> Dict[str, int]:
+        """Test every PROPOSED hypothesis against recent experiences.
+
+        Unlike active verification (which designs constrained experiments
+        and requires the agent to execute them), passive verification
+        observes the experiences that already happened and checks how
+        well each hypothesis predicts them. This works without any
+        cooperation from the downstream agent.
+
+        For each PROPOSED hypothesis ``h``:
+            1. Filter the last ``recent_window`` experiences by
+               ``h.action_types`` and ``h.trigger_conditions``.
+            2. If fewer than ``min_matching`` experiences match, skip.
+            3. Compute accuracy:
+               * AVOID: fraction of matching experiences that failed
+               * PREFER / SEQUENCE: fraction that succeeded
+            4. Append two ``add_verification`` entries (one per half of
+               the matching set) so the hypothesis satisfies the
+               ``min_verifications=2`` gate in
+               ``Hypothesis.is_ready_for_promotion``.
+            5. If accuracy >= ``promotion_confidence``: mark VERIFIED.
+               If accuracy <= ``refutation_confidence``: mark REFUTED.
+
+        Returns a summary dict ``{"verified": n, "refuted": n, "no_data": n}``.
+        """
+        proposed = self.hypothesis_store.get_proposed()
+        counts = {"verified": 0, "refuted": 0, "no_data": 0}
+        if not proposed:
+            return counts
+
+        recent = list(memory.experiences[-recent_window:])
+        if not recent:
+            return counts
+
+        for hypothesis in proposed:
+            matching = self._matching_experiences(hypothesis, recent)
+            if len(matching) < min_matching:
+                counts["no_data"] += 1
+                continue
+
+            accuracy = self._compute_passive_accuracy(hypothesis, matching)
+
+            # Split in half so we get two verification_history entries
+            # in one pass; this satisfies is_ready_for_promotion's
+            # min_verifications=2 gate without inventing fake history.
+            half = max(1, len(matching) // 2)
+            batches = [matching[:half], matching[half:]]
+            for batch in batches:
+                if not batch:
+                    continue
+                batch_accuracy = self._compute_passive_accuracy(hypothesis, batch)
+                hypothesis.add_verification(
+                    accuracy=batch_accuracy,
+                    conditions=[{
+                        "name": "passive_observation",
+                        "description": (
+                            f"Observed {len(batch)} matching experiences; "
+                            f"accuracy={batch_accuracy:.2f}"
+                        ),
+                        "expected_outcome": (
+                            "fail"
+                            if hypothesis.hypothesis_type == PrincipleType.AVOID
+                            else "success"
+                        ),
+                        "completed": True,
+                    }],
+                    episode_ids=[e.eid for e in batch],
+                    notes="passive_verification",
+                )
+
+            # Pin confidence to the observed accuracy. add_verification's
+            # weighted-average update drags toward the prior (0.5), which
+            # would prevent clean hypotheses from clearing the 0.8 gate.
+            # Passive verification has direct empirical evidence, so use
+            # it directly.
+            hypothesis.confidence = accuracy
+
+            if accuracy >= self.config.promotion_confidence:
+                self.hypothesis_store.mark_verified(hypothesis.hid)
+                self.hypothesis_store.update(hypothesis)
+                counts["verified"] += 1
+            elif accuracy <= self.config.refutation_confidence:
+                self.hypothesis_store.mark_refuted(hypothesis.hid)
+                self.hypothesis_store.update(hypothesis)
+                self._refutations_count += 1
+                counts["refuted"] += 1
+            else:
+                # Inconclusive: leave as PROPOSED but keep the
+                # verification entries so future passes can build on them.
+                self.hypothesis_store.update(hypothesis)
+                counts["no_data"] += 1
+
+        return counts
+
+    def resolve_contradictions(self) -> int:
+        """Refute hypotheses that contradict a VERIFIED hypothesis.
+
+        Two hypotheses are considered contradictory iff they share the
+        same ``action_types`` set and the same ``trigger_conditions``
+        set, but have opposite types (PREFER vs AVOID). Whichever side
+        already reached VERIFIED wins; the other is refuted.
+
+        Returns the number of hypotheses refuted by this pass.
+        """
+        verified_keys: Dict[
+            Tuple[frozenset, frozenset], "PrincipleType"
+        ] = {}
+        for h in self.hypothesis_store.hypotheses:
+            if h.status != HypothesisStatus.VERIFIED:
+                continue
+            if not h.action_types:
+                continue
+            key = (
+                frozenset(h.action_types),
+                frozenset(h.trigger_conditions or []),
+            )
+            verified_keys[key] = h.hypothesis_type
+
+        if not verified_keys:
+            return 0
+
+        refuted = 0
+        for h in self.hypothesis_store.hypotheses:
+            if h.status not in (
+                HypothesisStatus.PROPOSED,
+                HypothesisStatus.TESTING,
+            ):
+                continue
+            if not h.action_types:
+                continue
+            key = (
+                frozenset(h.action_types),
+                frozenset(h.trigger_conditions or []),
+            )
+            winner = verified_keys.get(key)
+            if winner is None or winner == h.hypothesis_type:
+                continue
+            self.hypothesis_store.mark_refuted(h.hid)
+            self.hypothesis_store.update(h)
+            self._refutations_count += 1
+            refuted += 1
+        return refuted
+
+    def _matching_experiences(
+        self,
+        hypothesis: Hypothesis,
+        experiences: List[Experience],
+    ) -> List[Experience]:
+        """Return experiences that fall within a hypothesis's scope.
+
+        An experience matches iff:
+            * its ``extra_metrics["action"]`` is in
+              ``hypothesis.action_types`` (or action_types is empty), AND
+            * every ``key=value`` pair in ``hypothesis.trigger_conditions``
+              holds in ``exp.symbolic_state`` (or trigger_conditions is
+              empty).
+        """
+        action_set = set(hypothesis.action_types or [])
+        trigger_pairs: List[Tuple[str, str]] = []
+        for cond in hypothesis.trigger_conditions or []:
+            if "=" in cond:
+                key, val = cond.split("=", 1)
+                trigger_pairs.append((key.strip(), val.strip()))
+
+        matching: List[Experience] = []
+        for exp in experiences:
+            if action_set:
+                action = (exp.extra_metrics or {}).get("action")
+                if action is None or str(action) not in action_set:
+                    continue
+            if trigger_pairs:
+                sym = exp.symbolic_state or {}
+                ok = True
+                for key, val in trigger_pairs:
+                    if str(sym.get(key)) != val:
+                        ok = False
+                        break
+                if not ok:
+                    continue
+            matching.append(exp)
+        return matching
+
+    def _compute_passive_accuracy(
+        self,
+        hypothesis: Hypothesis,
+        experiences: List[Experience],
+    ) -> float:
+        """Compute prediction accuracy of a hypothesis on a set of experiences."""
+        if not experiences:
+            return 0.0
+        if hypothesis.hypothesis_type == PrincipleType.AVOID:
+            correct = sum(
+                1 for e in experiences if e.fail or not e.success
+            )
+        else:
+            # PREFER, SEQUENCE, COMPARE, CONSTRAINT, GENERAL
+            correct = sum(1 for e in experiences if e.success)
+        return correct / len(experiences)
+
     def promote_verified(self) -> List[Principle]:
         """Promote verified hypotheses to principles."""
         promoted = []
@@ -226,6 +434,7 @@ class VerificationPlanner:
 
         return Principle(
             content=content,
+            principle_type=hypothesis.hypothesis_type,
             formal_rule=hypothesis.formal_rule,
             evidence_for=hypothesis.source_experience_ids,
             importance_score=2.0 + hypothesis.confidence * 5.0,

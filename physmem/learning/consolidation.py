@@ -17,6 +17,7 @@ import queue
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
+from collections import Counter, defaultdict
 from typing import Any, Callable, Dict, List, Optional, Tuple
 from pathlib import Path
 
@@ -456,29 +457,107 @@ class ConsolidationEngine:
         return hypotheses
 
     def _generate_rule_based(self, cluster: ExperienceCluster) -> List[Hypothesis]:
-        """Generate hypotheses using rules (no LLM needed)."""
-        hypotheses = []
+        """Generate hypotheses using rules (no LLM needed).
+
+        The rule-based path extracts the dominant action and the dominant
+        symbolic-state features from the cluster so that the resulting
+        hypotheses are *actionable*: downstream policies can filter on
+        ``action_types`` / ``trigger_conditions`` without needing an LLM.
+        """
+        hypotheses: List[Hypothesis] = []
+
+        # Fetch the actual experiences backing this cluster.
+        experiences: List[Experience] = []
+        for eid in cluster.experience_ids:
+            exp = self.memory.get(eid)
+            if exp is not None:
+                experiences.append(exp)
+        if not experiences:
+            return hypotheses
+
+        dominant_action = self._dominant_action(experiences)
+        dominant_state, trigger_conditions = self._dominant_symbolic_state(experiences)
+
+        n_fail = cluster.outcome_distribution.get("fail", 0)
+        n_succ = cluster.outcome_distribution.get("success", 0)
+        total = max(n_fail + n_succ, 1)
+
+        def _format(stmt_prefix: str, outcome_count: int) -> str:
+            parts = [stmt_prefix]
+            if dominant_action:
+                parts.append(f"'{dominant_action}'")
+            if dominant_state:
+                parts.append(f"when {dominant_state}")
+            parts.append(f"({outcome_count}/{total})")
+            return " ".join(parts)
+
+        action_types = [dominant_action] if dominant_action else []
 
         if cluster.is_mostly_failures:
             h = Hypothesis(
-                statement=f"Avoid the pattern seen in cluster {cluster.cid}: "
-                f"actions in this context lead to failure ({cluster.success_rate:.0%} success rate)",
+                statement=_format("Avoid", n_fail),
                 hypothesis_type=PrincipleType.AVOID,
                 source_experience_ids=cluster.experience_ids[:5],
                 source_cluster_id=cluster.cid,
+                action_types=action_types,
+                trigger_conditions=trigger_conditions,
             )
             hypotheses.append(h)
         elif cluster.is_mostly_successes:
             h = Hypothesis(
-                statement=f"Prefer the pattern seen in cluster {cluster.cid}: "
-                f"actions in this context lead to success ({cluster.success_rate:.0%} success rate)",
+                statement=_format("Prefer", n_succ),
                 hypothesis_type=PrincipleType.PREFER,
                 source_experience_ids=cluster.experience_ids[:5],
                 source_cluster_id=cluster.cid,
+                action_types=action_types,
+                trigger_conditions=trigger_conditions,
             )
             hypotheses.append(h)
 
         return hypotheses
+
+    def _dominant_action(self, experiences: List[Experience]) -> Optional[str]:
+        """Return the most common action string across the cluster."""
+        counter: Counter = Counter()
+        for exp in experiences:
+            if exp.extra_metrics:
+                action = exp.extra_metrics.get("action")
+                if action:
+                    counter[str(action)] += 1
+        if not counter:
+            return None
+        action, _ = counter.most_common(1)[0]
+        return action
+
+    def _dominant_symbolic_state(
+        self, experiences: List[Experience]
+    ) -> Tuple[str, List[str]]:
+        """Extract symbolic-state keys whose values are dominant in the cluster.
+
+        Returns ``(human_readable_summary, trigger_conditions_list)``.
+        A key is considered dominant when its modal value occurs in at
+        least 60% of experiences that reported that key.
+        """
+        per_key_counter: Dict[str, Counter] = defaultdict(Counter)
+        per_key_total: Dict[str, int] = defaultdict(int)
+        for exp in experiences:
+            if not exp.symbolic_state:
+                continue
+            for key, val in exp.symbolic_state.items():
+                if isinstance(val, (str, int, float, bool)):
+                    per_key_counter[key][val] += 1
+                    per_key_total[key] += 1
+
+        dominant_parts: List[str] = []
+        trigger_conditions: List[str] = []
+        for key, counter in per_key_counter.items():
+            val, count = counter.most_common(1)[0]
+            total = per_key_total[key]
+            if total > 0 and count / total >= 0.6:
+                dominant_parts.append(f"{key}={val}")
+                trigger_conditions.append(f"{key}={val}")
+
+        return ", ".join(dominant_parts), trigger_conditions
 
     # =========================================================================
     # Background Processing

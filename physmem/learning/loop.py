@@ -334,6 +334,16 @@ class ScientificLearningLoop:
             if clusters:
                 self.consolidation_engine.generate_hypotheses(clusters)
 
+        # Passive verification: test PROPOSED hypotheses against recent
+        # experiences and resolve PREFER/AVOID contradictions. This is
+        # what enables verified hypotheses to actually flow into the
+        # principle store via check_promotions() below.
+        self.verification_planner.passive_verify_all(
+            memory=self.memory,
+            recent_window=self.config.max_memory_size,
+        )
+        self.verification_planner.resolve_contradictions()
+
         # Decay all principles
         for principle in self.principle_store.principles:
             principle.apply_decay(decay_factor=0.995)
