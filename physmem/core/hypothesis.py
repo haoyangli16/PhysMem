@@ -450,6 +450,36 @@ class HypothesisStore:
             "ready_for_promotion": len(self.get_ready_for_promotion()),
         }
 
+    def format_for_prompt(
+        self,
+        hypotheses: Optional[List[Hypothesis]] = None,
+        max_hypotheses: int = 5,
+    ) -> str:
+        """Format active hypotheses as text for inclusion in LLM prompts.
+
+        By default returns only PROPOSED and VERIFIED hypotheses (the
+        "working memory" tier in the paper). Refuted and promoted ones
+        are excluded: refuted hypotheses are wrong, and promoted ones
+        already live in the principle store.
+        """
+        if hypotheses is None:
+            hypotheses = [
+                h for h in self.hypotheses
+                if h.status in (HypothesisStatus.PROPOSED, HypothesisStatus.VERIFIED)
+            ]
+            hypotheses.sort(key=lambda h: h.confidence, reverse=True)
+        hypotheses = hypotheses[:max_hypotheses]
+        if not hypotheses:
+            return "No active hypotheses."
+
+        lines = ["Active Hypotheses (under verification, treat as tentative):"]
+        for i, h in enumerate(hypotheses, 1):
+            conf_str = "HIGH" if h.confidence > 0.7 else "MEDIUM" if h.confidence > 0.4 else "LOW"
+            lines.append(f"{i}. [{conf_str}] {h.statement}")
+            if h.action_types:
+                lines.append(f"   Applies to: {', '.join(h.action_types)}")
+        return "\n".join(lines)
+
     def save(self, path: Path) -> None:
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)

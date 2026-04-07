@@ -87,10 +87,12 @@ mem = PhysMem(llm=llm)
 # 2. Record experiences during your task loop
 for episode in range(100):
     for step in range(max_steps):
-        # Inject learned principles into the agent's prompt so memory
+        # Inject learned knowledge into the agent's prompt so memory
         # actually influences the next decision (closes the feedback loop).
-        principles_prompt = mem.get_principles_prompt()
-        action = agent.act(observation, principles=principles_prompt)
+        # get_active_knowledge_prompt() returns BOTH verified principles
+        # and active hypotheses (working memory).
+        knowledge_prompt = mem.get_active_knowledge_prompt()
+        action = agent.act(observation, principles=knowledge_prompt)
         result = env.step(action)
 
         mem.record_experience(

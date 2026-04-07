@@ -78,18 +78,21 @@ def run_episode(
     actions = []
 
     while not done:
-        # 1. Get current principles for prompt injection
+        # 1. Get current knowledge for prompt injection.
+        #    get_active_knowledge_prompt() returns BOTH verified
+        #    principles and active (proposed/verified) hypotheses,
+        #    matching the paper's three-tier memory injection.
         principles = mem.get_principles()
-        principles_text = mem.get_principles_prompt()
+        knowledge_text = mem.get_active_knowledge_prompt()
 
         # 2. Get environment info for symbolic state
         env_info = env.get_info()  # domain-specific
         symbolic_state = extract_symbolic_state(env_info)
 
-        # 3. Agent generates action (with principles in prompt)
+        # 3. Agent generates action (with principles + hypotheses in prompt)
         action = vlm_agent.act(
             observation=obs,
-            principles=principles_text,  # Inject learned knowledge
+            principles=knowledge_text,  # Inject learned knowledge
         )
         actions.append(action)
 

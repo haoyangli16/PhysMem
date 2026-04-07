@@ -78,6 +78,14 @@ Apply them when making decisions.
 
 """
 
+HYPOTHESIS_PROMPT_HEADER = """## Active Hypotheses (Working Memory)
+
+The following hypotheses are still under verification. Treat them as
+tentative guidance: prefer them over no information, but defer to the
+verified principles above when the two conflict.
+
+"""
+
 
 class ScientificLearningLoop:
     """
@@ -460,6 +468,56 @@ class ScientificLearningLoop:
         return PRINCIPLE_PROMPT_HEADER + self.principle_store.format_for_prompt(
             principles, max_principles=max_p
         )
+
+    def get_active_hypotheses_prompt(
+        self,
+        max_hypotheses: Optional[int] = None,
+    ) -> str:
+        """Get active hypotheses (PROPOSED + VERIFIED) formatted for prompts.
+
+        Working-memory hypotheses are weaker than principles -- they are
+        still under verification -- but they carry useful early signal
+        before promotion. This formatter mirrors get_principles_prompt
+        and is composed by get_active_knowledge_prompt below.
+        """
+        max_h = max_hypotheses or self.config.max_principles_in_prompt
+        active = [
+            h for h in self.hypothesis_store.hypotheses
+            if h.status in (HypothesisStatus.PROPOSED, HypothesisStatus.VERIFIED)
+        ]
+        if not active:
+            return ""
+        active.sort(key=lambda h: h.confidence, reverse=True)
+        return HYPOTHESIS_PROMPT_HEADER + self.hypothesis_store.format_for_prompt(
+            active, max_hypotheses=max_h
+        )
+
+    def get_active_knowledge_prompt(
+        self,
+        action_type: Optional[str] = None,
+        max_principles: Optional[int] = None,
+        max_hypotheses: Optional[int] = None,
+    ) -> str:
+        """Format both principles and active hypotheses for the planner.
+
+        This matches the paper's three-tier memory injection (Sec. III-D,
+        Fig. 3): verified principles first, then working-memory
+        hypotheses. Either section is omitted if empty. Use this in
+        place of get_principles_prompt when you want the full memory
+        view, not just promoted knowledge.
+        """
+        sections = []
+        principles_text = self.get_principles_prompt(
+            action_type=action_type, max_principles=max_principles
+        )
+        if principles_text:
+            sections.append(principles_text)
+        hypotheses_text = self.get_active_hypotheses_prompt(
+            max_hypotheses=max_hypotheses
+        )
+        if hypotheses_text:
+            sections.append(hypotheses_text)
+        return "\n".join(sections)
 
     def get_stats(self) -> Dict[str, Any]:
         """Get comprehensive statistics."""
